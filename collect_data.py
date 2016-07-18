@@ -36,7 +36,7 @@ def main():
     dbConnect()
 
     #prepare sheets environment
-    #prepareSheetsEnv(ss, spreadsheetId, sheetTitle)
+    prepareSheetsEnv(ss, spreadsheetId, sheetTitle)
     
     #get the sheet id, since this can change with each delete sheet
     sheetId = ss.getSheetIdByTitle(spreadsheetId, sheetTitle)
@@ -69,16 +69,16 @@ def main():
 def prepareSheetsEnv(authInstance, spreadsheetId, sheetTitle):
     print("Preparing Google Sheets environment...")
 
-    print("Deleting sheet")
+    print("--Deleting sheet")
     authInstance.deleteSheet(spreadsheetId, sheetTitle)    
-    print("Creating new sheet")
+    print("--Creating new sheet")
     authInstance.createSheet(spreadsheetId, sheetTitle)
     sheetId = authInstance.getSheetIdByTitle(spreadsheetId, sheetTitle)
-    print("Inserting Header")
+    print("--Inserting Header")
     authInstance.insertRecord(spreadsheetId, sheetId, "LOCATION_ID", "WEATHER_READING_TIME", "TEMPERATURE", "HUMIDITY")
-    print("Querying historic data from database")
+    print("--Querying historic data from database")
     resultsToPopulate = queryWeatherPopulationSql()
-    print("Bulk inserting records from database")
+    print("--Bulk inserting records from database")
     #sort the list asc, so the order makes sense when we start populating.  It is in reverse order because we
     #wanted pull the most recent 40K records from the database
     resultsToPopulate = sorted(resultsToPopulate, key=lambda x:datetime.datetime.strptime(x[1],'%Y-%m-%d %H:%M:%S'))
@@ -87,7 +87,7 @@ def prepareSheetsEnv(authInstance, spreadsheetId, sheetTitle):
     authInstance.bulkInsertRecord(spreadsheetId, sheetTitle, data)
     #SHEETS.spreadsheets().values().update(spreadsheetId=SPREADSHEET_ID, range="{0}!A2".format(SHEET), body=data, valueInputOption='RAW').execute()
 
-    print("Google sheet data is ready!")
+    print("\nGoogle sheet data is ready!")
     #return sheetId
 
 
@@ -136,7 +136,7 @@ def queryWeatherPopulationSql():
 def printStartScreen():
     print('Logging sensor measurements every {0} seconds.'.format(tSettings.FREQUENCY_SECONDS))
     print('Press Ctrl-C to quit.')
-    print('Enter your location')
+    print("Enter your location\n")
 
 
 
@@ -145,6 +145,7 @@ def locationOptions():
     db = dbConnect()
     cur = db.cursor()
 
+    print("\n\nEnter a location:\n0 NO_LOCATION")
     cur.execute("SELECT location_id, location_desc FROM location")
     for row in cur.fetchall():
         print(row[0],row[1])
@@ -230,10 +231,6 @@ def weatherRecInsertSql(temperature, humidity, location, host, weather_time):
     cur.close()
     db.close()
 
-def get_noaa_reading():
-    urllib2.urlopen('view-source:http://w1.weather.gov/xml/current_obs/display.php?stid=KLOM')
-    weather = response.read()
-    print(weather)
 
 
 
