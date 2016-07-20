@@ -30,4 +30,9 @@ class Settings():
         self.SQLPW = "pw"
         self.SQLDB = "database"
 
+        #noaa settings
+        self.STATION_ID = "KLOM"
+
+
+
        
