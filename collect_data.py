@@ -5,6 +5,12 @@
 ###   Because google sheets has limited amount of values it can hold, it resets every 90K, and preloads
 ###   the data with averaged data from mysql
 
+#improvements
+#instead of pulling NOAA time every hour, attempt to pull around the time suggested in xml
+#before creating a new  noaa_weather_reading_id entry, check to see if the observation time is the same as the new reading.
+#   if so, then continue to use the old one.
+#wait until google fixes their bug with their API that allows different userformatting for bulk vs append
+
 from __future__ import print_function
 import argparse
 import MySQLdb
@@ -18,12 +24,15 @@ import ConfigParser
 from settings import Settings
 from gsheets import GSheets
 
-import urllib2
+import urllib2 #used for noaa readings
+import xml.etree.ElementTree as ET #parse xml from noaa readings
 
+import email.utils #used for noaa parsedate
 
 tSettings = Settings()
 
 def main():
+    #thermostatId = thermostat()
 
     #settings
     spreadsheetId = tSettings.SPREADSHEET_ID
@@ -50,16 +59,37 @@ def main():
     approachingMaxCols = 0 #if this number gets to 50K in case our sheet runs for a long time, then we need to reset google sheets
     # taking the rounded hourly values, cutting rows down by a factor of 12.
 
- 
+    #get the initial noaa reading and time
+    noaa_weather_reading_id = noaa()
+    last_noaa_reading = datetime.datetime.now()
+  
 
 
     while True:
         (temperature, humidity, host, weather_time) = collectData()
 
+        #check the time, if it's gone past the hour, pull again
+        curr_reading = datetime.datetime.now()
+        diff = curr_reading - last_noaa_reading
+        minutesFromLastNoaaReading = diff.total_seconds() / 60
+
+
+        #print('total minutes from last noaa reading: {}'.format(minutesFromLastNoaaReading))
+        if minutesFromLastNoaaReading >= 60.0: 
+            noaa_weather_reading_id = noaa()
+            last_noaa_reading = datetime.datetime.now()            
+
         print('Temperature: {0:0.1f} F'.format(temperature))
         print('Humidity:    {0:0.1f} %'.format(humidity))
 
-        weatherRecInsertSql(temperature, humidity, location, host, weather_time)
+        sqlInsert = """insert into weather_reading
+               (location_id, weather_reading_time, created_by, temperature, humidity, noaa_weather_reading_id)
+                values (%s,%s,%s,%s,%s,%s)"""
+
+        sqlValues = [location, weather_time, host, temperature, humidity, noaa_weather_reading_id]
+
+
+        weatherReadingId = insertSQLGetId(sqlInsert, sqlValues)
         ss.insertRecord(spreadsheetId, sheetId, location, weather_time, temperature, humidity)
 
         approachingMaxCols+=1
@@ -215,26 +245,73 @@ def collectData():
     return(temperature, humidity, host, ts)
 
 
-def weatherRecInsertSql(temperature, humidity, location, host, weather_time):
+
+def insertSQLGetId(sqlInsertQuery, valueList):
+    #values used to avoid sql injection, and allow for None to be inserted as null
     db = dbConnect()
     cur = db.cursor()
 
-    add_temp = ("insert into weather_reading " +
-               "(location_id, weather_reading_time, created_by, temperature, humidity) " +
-                "values (%s,'%s','%s',%s,%s)" %(location, weather_time, host, temperature, humidity))
     try:
-       cur.execute(add_temp)
+       cur.execute(sqlInsertQuery, valueList)
        db.commit()
     except:
        print("error inserting into sql")
        db.rollback()
+
+    lastRowId = cur.lastrowid
     cur.close()
     db.close()
+ 
+    return lastRowId
 
 
+def thermostat():
+    #This is not currently being used.  We adjust the heat during the winter and I don't trust myself to adequately update the database
+    print("Enter current thermostat reading: ", end = "")
+    thermostatTemperature = input()
+    insertSQL = "insert into thermostat (temperature) values (%s)"
+    insertValues = [thermostatTemperature]
+        
+    thermostatId = insertSQLGetId(insertSQL, insertValues)
+
+    return thermostatId
+
+def noaa():
+
+    noaa_url = "http://w1.weather.gov/xml/current_obs/display.php?stid=" + tSettings.STATION_ID
+    #url = urllib2.urlopen(noaa_url)
+    url = urllib2.urlopen(noaa_url)
+    xml_data = url.read()
 
 
+    tree = ET.fromstring(xml_data)
+    noaa = dict((child.tag, child.text) for child in tree)
 
+
+    #assumes that everything will be local, and can ignore the timezone adjustment
+    raw = noaa.get('observation_time_rfc822')
+    date_tuple = email.utils.parsedate_tz(raw)
+    date_stamp = email.utils.mktime_tz(date_tuple)
+    observation_time = datetime.datetime.fromtimestamp(date_stamp)
+
+    insertSQLCode = """insert into noaa_weather_reading
+           (LOCATION,STATION,LATITUDE,LONGITUDE,OBSERVATION_TIME,
+           WEATHER,TEMPERATURE,RELATIVE_HUMIDITY,WIND_DIR,WIND_DEGREES,
+           WIND_WPH,WIND_GUST_MPH,PRESSURE_IN,DEWPOINT,HEAT_INDEX,
+           VISIBILITY) values (%s, %s, %s, %s, %s,
+                                %s, %s, %s, %s, %s, 
+                                %s, %s, %s, %s, %s,
+                                %s)
+           """
+
+    valueList = [noaa.get('location', None), noaa.get('station_id', None), noaa.get('latitude', None), noaa.get('longitude', None), observation_time,
+              noaa.get('weather', None), noaa.get('temp_f', None), noaa.get('relative_humidity', None), noaa.get('wind_dir', None), noaa.get('wind_degrees', None),
+              noaa.get('wind_mph',None), noaa.get('wind_gust_mph',None), noaa.get('pressure_in',None), noaa.get('dewpoint_f',None), noaa.get('heat_index_f',None),
+              noaa.get('visibility_mi', None)]
+
+    noaa_weather_reading_id = insertSQLGetId(insertSQLCode, valueList)
+
+    return noaa_weather_reading_id
 
 
 if __name__ == "__main__": main()
